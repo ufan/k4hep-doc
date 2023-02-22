@@ -18,5 +18,4 @@ Contents
 
 .. toctree::
 
-   usage
    dd4hep
