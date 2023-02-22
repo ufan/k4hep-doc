@@ -1,17 +1,14 @@
-Welcome to Lumache's documentation!
+Welcome to Megat documentation!
 ===================================
 
-**Lumache** (/lu'make/) is a Python library for cooks and food lovers
-that creates recipes mixing random ingredients.
-It pulls data from the `Open Food Facts database <https://world.openfoodfacts.org/>`_
-and offers a *simple* and *intuitive* API.
-
-Check out the :doc:`usage` section for further information, including
-how to :ref:`installation` the project.
+**Megat** is a space gamma spectrometer focusing on sub-MeV energy range.
+This site serves as the main references for developping k4megat, the official
+framework Software for **Megat** simulation, recostruction and analysis.
 
 .. note::
 
-   This project is under active development.
+   This project is still in its early stage, designning and prototyping.
+   Everything is under active development.
 
 Contents
 --------
