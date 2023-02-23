@@ -3,9 +3,9 @@ Welcome to k4megat dive-series documentation!
 
 The **Dive-series** aims to provide k4megat developers a deep insight into the building
 blocks of `k4megat` software, i.e.:
-- `DD4hep <https://dd4hep.web.cern.ch/dd4hep/>`
-- `EDM4hep <https://edm4hep.web.cern.ch/>`
-- `Gaudi <https://gaudi-framework.readthedocs.io/en/latest/>`
+- `DD4hep <https://dd4hep.web.cern.ch/dd4hep/>`_
+- `EDM4hep <https://edm4hep.web.cern.ch/>`_
+- `Gaudi <https://gaudi-framework.readthedocs.io/en/latest/>`_
 
 They are based on my learning notes, and no guarantee that they are correct (since they are based
 on my personal knowlegebase).
