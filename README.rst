@@ -1,9 +1,6 @@
-Template for the Read the Docs tutorial
+key4hep learning notes
 =======================================
 
-This GitHub template includes fictional Python library
-with some basic Sphinx docs.
-
-Read the tutorial here:
-
-https://docs.readthedocs.io/en/stable/tutorial/
+- dd4hep
+- edm4hep
+- Gaudi
