@@ -1,11 +1,8 @@
-=============================================================
-Dive into DD4hep: architecture, library development and usage
-=============================================================
---------------------------------------------------------------------------
-Based on the learning notes while developing ``k4megat`` for MEGAT project
---------------------------------------------------------------------------
+================
+Dive into DD4hep
+================
 
-    :Author: Yong Zhou
+    :Author: yong
 
 .. contents::
 
@@ -265,6 +262,19 @@ The tree of Detector Elements is fully degenerate and each detector element obje
 once in the detector element tree. In contrary, a TGeoNode is placed once in its mother volume, but the
 mother volume may be multiple times, thus placed multiple times in the end.
 
+1.4.1 category of detector element
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Detector elements are categorized into 4 pre-defined groups:
+
+- *tracker*
+
+- *calorimeter*
+
+- *compound*
+
+- *passive*
+
 1.5 Volume
 ~~~~~~~~~~
 
@@ -275,6 +285,23 @@ mother volume may be multiple times, thus placed multiple times in the end.
 
 1.6 Surface
 ~~~~~~~~~~~
+
+1.6.1 management
+^^^^^^^^^^^^^^^^
+
+The whole list of surfaces is organized by ``SurfaceManager`` into three std\:\:multimaps using different keys:
+
+- top level ``DetElement`` name
+
+- types
+
+'world'
+    meaning all surfaces in the detector geometry
+
+    ``SurfaceManager`` is a data extension of ``Detector``.
+    It is created with ``InstallSurfaceManager`` plugin, usually embed in the ``compact`` xml as a post-processor [3]_ .
+    In instantiation, it will transverse the whole geometry and collect the surfaces in each top-level detector
+    element and map them into the above three collections.
 
 1.7 Field
 ~~~~~~~~~
@@ -484,7 +511,7 @@ It's a logical concept without corresponding class definition, just like a C++20
 
 ``Handle<NamedObject>`` is a template class acting as the base class to access all named ``Object`` in DD4hep.
 It acts as a shared pointer of underlying ``NamedObject``.
-No reference counting  [3]_  is added, explicit destroy needed and the ownership is statically defined by the designer.
+No reference counting  [4]_  is added, explicit destroy needed and the ownership is statically defined by the designer.
 ``Object`` in DD4hep is always passed and handled by a ``Handle``.
 ``Handle<NamedObject>`` is aliased to ``Ref_t``.
 All ``Handle`` managed resources are created on heap, thus having static life span.
@@ -679,4 +706,6 @@ Two ``mutex`` are used in ``Registry``:
     ``static`` keyword can achieve the same goal for variable declarations, functions and anonymous unions, but not for
     type declaration. (`see this <https://stackoverflow.com/questions/4422507/superiority-of-unnamed-namespace-over-static>`_)
 
-.. [3] Reference counting is a specialization in some object implementation. No systematic usage in DD4hep except DDG4.
+.. [3] Direct usage in C++ code is possible, see `DDMarlinCED in MarlinUtil <~/src/physics/ilcsoft/MarlinUtil/source/src/DDMarlinCED.cc>`_
+
+.. [4] Reference counting is a specialization in some object implementation. No systematic usage in DD4hep except DDG4.
