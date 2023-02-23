@@ -2,7 +2,7 @@
 
 # -- Project information
 
-project = 'Megat'
+project = 'k4hep-doc'
 copyright = '2023, USTC'
 author = 'Yong Zhou'
 
