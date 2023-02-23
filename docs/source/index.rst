@@ -15,6 +15,6 @@ Contents
 
 .. toctree::
 
-   dd4hep
-   edm4hep
+   dd4hep/dd4hep
+   edm4hep/edm4hep
    gaudi/gaudi
