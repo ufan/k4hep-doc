@@ -283,10 +283,101 @@ Detector elements are categorized into 4 pre-defined groups:
 
 - create volumeID of DetElement
 
+  - have to instatiate it using ``Detector`` descriptin once to make sure volID is generated
+
 1.6 Surface
 ~~~~~~~~~~~
 
-1.6.1 management
+1.6.1 Overview
+^^^^^^^^^^^^^^
+
+'Surface' in ``DD4hep`` normally is associated with a measurement surface of a detector element, but can be used
+for any purposes (e.g. passive material like beam pipe).
+
+Surface is attached/associated with a geometry volume.
+
+Interface class ``ISurface`` provides the access interface of using surface for the client:
+
+.. table:: List of interface methods of ``ISurface``
+    :name: tbl:surface_inerface
+
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | Method                   | Decription                                                                                           |
+    +==========================+======================================================================================================+
+    | *type()*                 | properties of the surface                                                                            |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *id()*                   | same as DetElement id or volID or cellID                                                             |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *u()*, *v()*             | the two unit vector along the two measurement direction on the surface                               |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *origin()*               | origin unit vector of the surface measurement coordinate system                                      |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *normal()*               | unit vector along the normal direction of the surface, usually point out of the sensitive area       |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *length\_along\_u()/v()* | the length of the surface along *u* or *v*, can be used for boundary checking of regular shape       |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *insideBounds()*         | default condition: on surface with a tolerance and inside shape, customizable                        |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *distance()*             | distance to the surface, used to judge on surface or not,default is perpenticular line, customizable |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *globalToLocal()*        | 3d global coordinates to 2d *(u,v)* coordinates with *o* as origin                                   |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *localToGlobal()*        | reverse of *globalToLocal()*                                                                         |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *getLines()*             | for drawing the surface (used in *teveDisplay* to show the attached surface)                         |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *inner/outerThickness()* | thickness along normal and minus-normal direction of the surface                                     |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+    | *inner/outerMaterial()*  | material type on the inside/outside of the surface                                                   |
+    +--------------------------+------------------------------------------------------------------------------------------------------+
+
+The implementation distinguishes the concept of logical surface and physical surface by two subclass from ``ISurface``:
+
+``VolSurface``
+    a logical entity, which provides
+
+    - the association with a logical volume
+
+    - *u*,/v/,/n/,/o/ vectors in the associated volume's coordinate system
+
+    - in bottom, it acts a shared\_ptr style resource handle to ``VolSurfaceBase`` which
+
+      - ``VolSurfaceBase`` is the real data object underneath
+
+    - some setters in addition to ``ISurface`` interfaces
+
+    - custom implementation may be provided for special volumes by inheriting from ``VolSurface``
+
+    - using local coordinates as argument
+
+    - this is the interface client uses to define a surface in detector construction
+
+``Surface``
+    represents a placed surface, which provides
+
+    - the association with a ``DetElement`` (since detector element is fully degenerated tree)
+
+    - *u*, *v*, *n*, *o* vectors in the world coordinate system
+
+    - valid coordinate system transform: *localToGlobal* and *globalToLocal*
+
+    - it's a usage class without setter
+
+    - using global coordinates as argument
+
+    - this is the interface client uses for reconstruction purposes
+
+Two list of these two types of ``ISurface`` implementation:
+
+- ``VolSurfaceList``
+
+~ ``SurfaceList``
+Both inherits from ``std::list`` for efficient insert/splice.
+
+1.6.1.1 todo: list of pre-defined implementation of ``VolSurface``
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+1.6.2 management
 ^^^^^^^^^^^^^^^^
 
 The whole list of surfaces is organized by ``SurfaceManager`` into three std\:\:multimaps using different keys:
