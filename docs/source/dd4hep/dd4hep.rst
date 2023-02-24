@@ -262,6 +262,8 @@ The tree of Detector Elements is fully degenerate and each detector element obje
 once in the detector element tree. In contrary, a TGeoNode is placed once in its mother volume, but the
 mother volume may be multiple times, thus placed multiple times in the end.
 
+.. _sec:detelement_types:
+
 1.4.1 category of detector element
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -296,6 +298,7 @@ for any purposes (e.g. passive material like beam pipe).
 
 Surface is attached/associated with a geometry volume.
 
+All surface related features are in ``DDRec`` package.
 Interface class ``ISurface`` provides the access interface of using surface for the client:
 
 .. table:: List of interface methods of ``ISurface``
@@ -331,6 +334,14 @@ Interface class ``ISurface`` provides the access interface of using surface for 
     | *inner/outerMaterial()*  | material type on the inside/outside of the surface                                                   |
     +--------------------------+------------------------------------------------------------------------------------------------------+
 
+.. notes::
+
+    Note that although surface id is ``DetElement`` id, but multiple surfaces can be attached to the same ``DetElement``.
+    Thus it's a multimap (see Sec. `sec:surface_management`_ for details).
+
+1.6.2 data classes
+^^^^^^^^^^^^^^^^^^
+
 The implementation distinguishes the concept of logical surface and physical surface by two subclass from ``ISurface``:
 
 ``VolSurface``
@@ -339,6 +350,8 @@ The implementation distinguishes the concept of logical surface and physical sur
     - the association with a logical volume
 
     - *u*,/v/,/n/,/o/ vectors in the associated volume's coordinate system
+
+    - fake (just in the local coordinate system) transform: *localToGobal* and *globalToLocal*
 
     - in bottom, it acts a shared\_ptr style resource handle to ``VolSurfaceBase`` which
 
@@ -357,9 +370,13 @@ The implementation distinguishes the concept of logical surface and physical sur
 
     - the association with a ``DetElement`` (since detector element is fully degenerated tree)
 
+    - use world transformation of ``DetElement`` to define the real position of the physical surface
+
     - *u*, *v*, *n*, *o* vectors in the world coordinate system
 
-    - valid coordinate system transform: *localToGlobal* and *globalToLocal*
+    - real coordinate system transform: *localToGlobal* and *globalToLocal*
+
+    - custom implementation may be provided for special surfaces by inheriting from ``VolSurface``
 
     - it's a usage class without setter
 
@@ -367,18 +384,67 @@ The implementation distinguishes the concept of logical surface and physical sur
 
     - this is the interface client uses for reconstruction purposes
 
-Two list of these two types of ``ISurface`` implementation:
+Two list of the above two types of ``ISurface`` implementation:
 
 - ``VolSurfaceList``
 
 ~ ``SurfaceList``
-Both inherits from ``std::list`` for efficient insert/splice.
+Both inherit from ``std::list`` for efficient insert/splice.
+Both are attach to the ``DetElement`` as a data object extension (for object extension, see Sec. `sec:extension`_).
 
-1.6.1.1 todo: list of pre-defined implementation of ``VolSurface``
-::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+List of predefined surface shapes:
 
-1.6.2 management
-^^^^^^^^^^^^^^^^
+.. table::
+
+    +----------+------------------------+------------------------------------+-------------------------------+
+    | shape    | ``VolSurfaceBase``     | ``VolSurface``                     | description                   |
+    +==========+========================+====================================+===============================+
+    | Plane    | ``VolPlaneImpl``       | ``VolSurfaceHandle<VolPlaneImpl>`` | flat plane, moest common type |
+    +----------+------------------------+------------------------------------+-------------------------------+
+    | Cone     | ``VolConeImpl``        | ``VolCone``                        | \                             |
+    +----------+------------------------+------------------------------------+-------------------------------+
+    | Cylinder | ``VolCylinderImpl``    | ``VolCylinder``                    | no z constraint               |
+    +----------+------------------------+------------------------------------+-------------------------------+
+    | Cylinder | ``SimpleCylinderImpl`` | ``SimpleCylinder``                 | add z length constraint       |
+    +----------+------------------------+------------------------------------+-------------------------------+
+
+List of pre-defined implementation of ``VolSurface``, they are defined mainly to
+hide the dynamic allocation of the underlying ``VolSurfaceBase`` object (AKA ``value semantic``):
+
+- ``VolSurfaceHandle<T>``
+
+  - type argument is of type ``VolSurfaceBase``
+
+  - ``VolPlane`` as a demo: ``typedef VolSurfaceHandle< VolPlaneImpl > VolPlane``
+
+  - limitation: the constructor signature is limited
+
+- ``VolCone``
+
+  - for Cone style surface with special constructor arguments
+
+- ``VolCylinder``
+
+  - for Cylinder style surface with special constructor arguments
+
+- ``SimpleCylinder``
+
+  - a customized cylider surface implementation defined for beam pipe
+
+  - defined in ``DDDetectors``
+
+.. _sec:surface_management:
+
+1.6.3 management classes
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+There are three levels of management (as a class) defined:
+
+- ``DetectorSurfaces``
+
+- ``SurfaceHelper``
+
+- ``SurfaceManager``
 
 The whole list of surfaces is organized by ``SurfaceManager`` into three std\:\:multimaps using different keys:
 
@@ -393,6 +459,123 @@ The whole list of surfaces is organized by ``SurfaceManager`` into three std\:\:
     It is created with ``InstallSurfaceManager`` plugin, usually embed in the ``compact`` xml as a post-processor [3]_ .
     In instantiation, it will transverse the whole geometry and collect the surfaces in each top-level detector
     element and map them into the above three collections.
+
+1.6.4 add and use surface
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Adding surface into detector geometry is simple, in the detector construction plugin source:
+
+.. code:: c++
+
+    DetElement aDE( motherDE, names, id);
+    aDE.setPlacement(pv) ;
+    // define the DetElement and a VolSurface yon need, here is flat plane
+    VolPlane surf(...)
+    // use helper function to add it to the associated DetElement's VolSurfaceList
+    volSurfaceList(aDE)->push_back(surf) ;
+
+Then, in the ``compact`` xml, add a post-processor plugin:
+
+.. code:: xml
+
+    <plugins>
+       <plugin name="InstallSurfaceManager"/>
+    </plugins>
+
+``IntallSurfaceManager`` is needed to create a ``SurfaceManager`` instance, which in turn scan through the geometry
+tree and create the surfaces and put them into corresponding maps in the meantime.
+
+Alternatively, ``DD4hep`` provides an API to define a post-processor plugin to add ``VolSurface`` after the geometry
+tree is closed. The API is defined in ``SurfaceInstaller.cpp`` source file in ``DDCore`` package and aims to add
+surfaces to a top-level sub-detector automatically.
+Since it's a plugin, user can choose to add ``VolSurface`` into the geometry or not by toggling the plugin.
+
+An demo usage is as following, in the plugin source file:
+
+.. code:: c++
+
+    // 1. an optional data struct to hold xml parameters of this plugin
+    namespace {
+      struct UserData {
+        int dimension ; // measurement dimension, 1 or 2
+        double uvector[3]; // one of the measurement direction unit
+        double vvector[3]; // the other one
+      };
+    }
+
+    // 2. the API requested macros
+    #define SURFACEINSTALLER_DATA UserData
+    #define DD4HEP_USE_SURFACEINSTALL_HELPER DD4hep_GenericSurfaceInstallerPlugin // name of the plugin
+
+    // 3. include the API header
+    #include "DD4hep/SurfaceInstaller.h"
+
+    // 4. optionally overwrite the function to handl xml parameters, to be stored in UserData
+    template <> void Installer<UserData>::handle_arguments(int argc, char** argv)   {
+      // parse argc and argv directly, they are correctly fetched from xml by the API
+      // ...
+    }
+
+    // 5. optionally overwrite the function to create VolSurface.
+    //    It's invoked for each ~DetElement~ of the subdetector
+    template <typename UserData>
+    void Installer<UserData>::install(dd4hep::DetElement component, dd4hep::PlacedVolume pv)   {
+      // component: a detector element; pv: the placeVolume of this detector element
+
+      // ...
+
+      // define the VolSurface as usual
+      VolPlane surf(comp_vol, type, inner_thickness, outer_thickness, u, v, n, o);
+
+      // attach the VolSurface (Caveat: not with volSurfaceList())
+      addSurface(component,surf);
+
+      // optional stop scanning the hierarchy any further, only process the top-level element
+      stopScanning() ;
+    }
+
+Then, add this plugin in the ``compact`` xml:
+
+.. code:: xml
+
+    <!-- name is existing subdetector name -->
+    <plugins>
+      <plugin name="DD4hep_GenericSurfaceInstallerPlugin">
+        <!-- argument is pased to handle_arguments() -->
+        <argument value="OuterTrackerBarrel"/>
+        <argument value="dimension=2"/>
+        <argument value="u_x=1."/>
+        <argument value="v_y=1."/>
+        <argument value="n_z=1."/>
+      </plugin>
+
+      <!-- still needed to actually create Surfaces -->
+      <plugin name="InstallSurfaceManager"/>
+    </plugins>
+
+Usually, ``SurfaceInstaller`` is customized to install surfaces for sensitive detector elements automatically.
+Predefined installers defined in ``DDDetectors`` are:
+
+.. table::
+
+    +----------------------------------------------------+------------------------------------------------------------------------+
+    | plugin name                                        | feature                                                                |
+    +====================================================+========================================================================+
+    | ``DD4hep_GenericSurfaceInstallerPlugin``           | create plane surface for sensitive box shape, u,v,n,o configuration    |
+    +----------------------------------------------------+------------------------------------------------------------------------+
+    | ``DD4hep_SiTrackerBarrelSurfacePlugin``            | same as above, but more constraint u,v,n,o                             |
+    +----------------------------------------------------+------------------------------------------------------------------------+
+    | ``DD4hep_SiTrackerEndcapSurfacePlugin``            | trapezoid sensitive shape                                              |
+    +----------------------------------------------------+------------------------------------------------------------------------+
+    | ``DD4hep_PolyhedraEndcapCalorimeterSurfacePlugin`` | polyhedra sensitive shape                                              |
+    +----------------------------------------------------+------------------------------------------------------------------------+
+    | ``DD4hep_CaloFaceBarrelSurfacePlugin``             | barrel box shape, not sensitive-related, a single plane for each slice |
+    +----------------------------------------------------+------------------------------------------------------------------------+
+    | ``DD4hep_CaloFaceEndcapSurfacePlugin``             | two mono-block polyhedron for each endcap, not sensitive-related       |
+    +----------------------------------------------------+------------------------------------------------------------------------+
+
+1.6.5 class diagram
+^^^^^^^^^^^^^^^^^^^
 
 1.7 Field
 ~~~~~~~~~
