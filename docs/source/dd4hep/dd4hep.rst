@@ -119,7 +119,7 @@ Top-level tags under root node are associated with a predefined ``Converter`` (s
 These parser defines the basic structure of ``compact`` xml.
 The parsing sequence is as following:
 
-.. image:: compact_xml_structure.png
+.. image:: fig/compact_xml_structure.png
 
 Correct invoking sequence of the converters is needed for tags which may use existing info from previous tags, e.g.
 ``<detector>`` and ``<sensitivedetector>``.
@@ -184,7 +184,7 @@ There're three three states in ``Detector`` instance while building it from xml:
 
 - clea
 
-.. image:: detector_class_hierarchy.png
+.. image:: fig/detector_class_hierarchy.png
 
 1.2 post-processor plugins
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -388,8 +388,13 @@ Two list of the above two types of ``ISurface`` implementation:
 
 - ``VolSurfaceList``
 
-~ ``SurfaceList``
-Both inherit from ``std::list`` for efficient insert/splice.
+  - contained ``VolSurface`` is reference counted
+
+- ``SurfaceList``
+
+  - owner of the contained ``Surface``
+
+Both inherit from ``std::list`` of surface pointers for efficient insert/splice.
 Both are attach to the ``DetElement`` as a data object extension (for object extension, see Sec. `sec:extension`_).
 
 List of predefined surface shapes:
@@ -433,6 +438,14 @@ hide the dynamic allocation of the underlying ``VolSurfaceBase`` object (AKA ``v
 
   - defined in ``DDDetectors``
 
+List of pre-defined physical surface class:
+
+- ``Surface``
+
+- ``CylinderSurface``
+
+- ``ConeSurface``
+
 .. _sec:surface_management:
 
 1.6.3 management classes
@@ -442,28 +455,64 @@ There are three levels of management (as a class) defined:
 
 - ``DetectorSurfaces``
 
+  - subclass of ``DetElement``
+
+  - create the ``SurfaceList`` object extension
+
+  - create a list of ``Surface`` from the ``DetElement``'s ``VolSurfaceList`` and put them into the ``SurfaceList`` extension
+
+  - this ``SurfaceList`` is the owner of the contained ``Surface``
+
+  - acts on the same level of geometry tree, no transversal into daughter level
+
 - ``SurfaceHelper``
+
+  - usually acts on a top-level subdetector element (no constraint on using it in any level of geometry tree)
+
+  - scan through current and all lower levels of the geometry tree
+
+  - uses ``DetectorSurfaces`` internally to create ``SurfaceList`` for each ``DetElement`` on the lower level
+
+  - collect all ``Surface`` in this process and stores a copy of them in a ``SurfaceList`` data member
+
+  - this ``SurfaceList`` is not the owner of contained ``Surface``, just a view
 
 - ``SurfaceManager``
 
-The whole list of surfaces is organized by ``SurfaceManager`` into three std\:\:multimaps using different keys:
+  - acts on the detector descriptin level (aka world-level)
 
-- top level ``DetElement`` name
+  - loop through all top-level subdetectors
 
-- types
+  - in this processs
 
-'world'
-    meaning all surfaces in the detector geometry
+    - uses ``SurfaceHelper`` to create surfaces for each subdetector
 
-    ``SurfaceManager`` is a data extension of ``Detector``.
-    It is created with ``InstallSurfaceManager`` plugin, usually embed in the ``compact`` xml as a post-processor [3]_ .
-    In instantiation, it will transverse the whole geometry and collect the surfaces in each top-level detector
-    element and map them into the above three collections.
+    - and collect a copy of all surfaces and categorize them according to subdetector name, detector type name
+      and 'world'
 
-1.6.4 add and use surface
-^^^^^^^^^^^^^^^^^^^^^^^^^
+    - the entry in each category is a ``std::multimap`` with surface id as key and pointer to ``Surface`` as value
 
-Adding surface into detector geometry is simple, in the detector construction plugin source:
+  - these surface maps are not owner of contained ``Surface``, just a view
+
+  - it is created with ``InstallSurfaceManager`` plugin, usually embed in the ``compact`` xml as a post-processor [3]_ .
+
+    - ``SurfaceManager`` is installed as a data extension of ``Detector``
+
+.. image:: fig/surface_categories.png
+
+1.6.4 add surface
+^^^^^^^^^^^^^^^^^
+
+Adding surface into detector geometry is simple:
+
+1. create ``VolSurface``
+
+2. add it to a ``DetElement``
+
+3. instantiate a ``SurfaceManager``
+
+Method 1:
+in the detector construction plugin source:
 
 .. code:: c++
 
@@ -485,7 +534,8 @@ Then, in the ``compact`` xml, add a post-processor plugin:
 ``IntallSurfaceManager`` is needed to create a ``SurfaceManager`` instance, which in turn scan through the geometry
 tree and create the surfaces and put them into corresponding maps in the meantime.
 
-Alternatively, ``DD4hep`` provides an API to define a post-processor plugin to add ``VolSurface`` after the geometry
+Method 2:
+alternatively, ``DD4hep`` provides an API to define a post-processor plugin to add ``VolSurface`` after the geometry
 tree is closed. The API is defined in ``SurfaceInstaller.cpp`` source file in ``DDCore`` package and aims to add
 surfaces to a top-level sub-detector automatically.
 Since it's a plugin, user can choose to add ``VolSurface`` into the geometry or not by toggling the plugin.
@@ -574,8 +624,51 @@ Predefined installers defined in ``DDDetectors`` are:
     | ``DD4hep_CaloFaceEndcapSurfacePlugin``             | two mono-block polyhedron for each endcap, not sensitive-related       |
     +----------------------------------------------------+------------------------------------------------------------------------+
 
-1.6.5 class diagram
+1.6.5 use surface
+^^^^^^^^^^^^^^^^^
+
+Method 1:
+cellID-based using ``SurfaceManager`` interface
+
+.. code:: c++
+
+    // SurfaceManager instance is an extension object of dectector descriptin
+    Detector& description = context()->detectorDescription();
+    SurfaceManager& surfMan = *description.extension< SurfaceManager >() ;
+
+    // Get the category of surface map
+    const SurfaceMap& surfMap = *surfMan.map( "world" ) ;
+
+    // cellID is from hit, use it to find the surface
+    SurfaceMap::const_iterator si = surfMap.find(hit->cellID);
+    ISurface* surf = (si != surfMap.end() ?  si->second  : 0);
+
+    // use any method you need
+    double dist = surf->distance(hit_point)/dd4hep::mm;
+    auto isInside=surf->insideBounds(hit_point)
+
+Method 2:
+``DetElement``-based
+
+.. code:: c++
+
+    // method one:
+    // use a target detector element to create the helper
+    SurfaceHelper surfMan(det) ;
+    // fetch and loop through the surface list
+    const SurfaceList& sL = surfMan.surfaceList() ;
+    for( SurfaceList::const_iterator it = sL.begin() ; it != sL.end() ; ++it ){
+      // ...
+     }
+
+    // method two:
+    // just fetch the surface list directly from detector element
+    SurfaceList* sL = det.extension<SurfaceList>();
+
+1.6.6 class diagram
 ^^^^^^^^^^^^^^^^^^^
+
+.. image:: fig/surface_class.png
 
 1.7 Field
 ~~~~~~~~~
@@ -843,7 +936,7 @@ Most object ownership is solved in ``DetectorData``:
 - ``Volume`` in the same sense that ``DetectorData`` owns a top ``VolumeManager``, which in turn
   owns all its child Volume. [todo: this is guess, to be verified]
 
-.. image:: object_stratery_classes.png
+.. image:: fig/object_stratery_classes.png
 
 .. _sec:plugin_framework:
 
@@ -926,7 +1019,7 @@ Both return values are pointer to the interface class.
 8.3.2 class diagram
 ^^^^^^^^^^^^^^^^^^^
 
-.. image:: extension_mechanism_classes.png
+.. image:: fig/extension_mechanism_classes.png
 
 8.3.3 List of classes with extension support
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -957,7 +1050,7 @@ Classes either inherit from or contains ``ObjectExtensions``:
 8.3.4.1 main classes
 ::::::::::::::::::::
 
-.. image:: plugin_mechanism_design1.png
+.. image:: fig/plugin_mechanism_design1.png
 
 8.3.4.2 thread-safety implementation
 ::::::::::::::::::::::::::::::::::::
