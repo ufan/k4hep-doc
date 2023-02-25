@@ -184,27 +184,37 @@ There're three three states in ``Detector`` instance while building it from xml:
 
 - clea
 
-.. image:: fig/detector_class_hierarchy.png
+.. image:: detector_class_hierarchy.png
 
 1.2 post-processor plugins
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+1.2.1 overview
+^^^^^^^^^^^^^^
+
 After loading and building the geometry from xml, post-processing of the geometry is possible using plugins.
-``<plugin>`` tag is used for this purpose.
 Plugins which are callable from xml is defined by the macro:
 
 .. code:: c++
 
-    //
-    #define DECLARE_APPLY(name,func)
-    // func type, first arg is current detector description
-    long(dd4hep::Detector& l,int n,char** a)
+    // Define the actual function (in global scope) invoked by the plugin
+    // The signature is as following:
+    // - description : the target detector descriptin to be processed
+    // - argc, argv  : the parameter list from xml parsing or command line
+    long create_demo_plugin(dd4hep::Detector& descriptin,int argc,char** argv) {
+      // ...
+    }
+
+    // define a post-processor plugin
+    #define DECLARE_APPLY(Deom_Plugin_Name, create_demo_plugin)
 
 These plugins are built upon the plugin framework of DD4hep (details on Sec. `sec:plugin_framework`_
 They are totally user-customizable and their usage is very flexible.
 In DD4hep, they are used:
 
 1. as post-processor during xml parsing
+
+   - ``<plugin>`` tag for this purpose
 
    - the last step of DOM parsing, after building other ``Detector`` components
 
@@ -227,7 +237,38 @@ In DD4hep, they are used:
 Both step 2 and 3 need an detector xml file as a command line argument.
 The xml file specify the detector geometry to be processed by the plugin.
 
-[todo] List of useful post-processor:
+If using a plugin from xml, the ``<plugin>`` syntax is:
+
+.. code:: xml
+
+    <plugins>
+      <plugin name="PluginName_1">
+        <argument value="blah"/>
+        <argument value="blah blah"/>
+        <!-- ... -->
+      </plugin>
+
+      <plugin name="PluginName_2">
+        <argument value="foo"/>
+        <argument value="foo foo"/>
+        <!-- ... -->
+      </plugin>
+
+      <!-- ... -->
+    </plugins>
+
+Unlimited number of plugins may be attatched, and they are invoked in sequence.
+
+1.2.2 List of useful post-processor plugins
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. table::
+
+    +-----------------------------+-------------------------------------------------------------------------------------------------------------------------+
+    | plugin name                 | feature                                                                                                                 |
+    +=============================+=========================================================================================================================+
+    | ``DD4hep_ParametersPlugin`` | create a ``VariantParameters`` extension object and add it to the specified ``DetElement`` (details on `sec:extension`_ |
+    +-----------------------------+-------------------------------------------------------------------------------------------------------------------------+
 
 1.3 Readout
 ~~~~~~~~~~~
@@ -708,8 +749,6 @@ OverlayedField
 1.10 Apps
 ~~~~~~~~~
 
-[[
-
 .. table::
 
     +------------------+-----------------------------------------------------------------------------------+
@@ -936,7 +975,7 @@ Most object ownership is solved in ``DetectorData``:
 - ``Volume`` in the same sense that ``DetectorData`` owns a top ``VolumeManager``, which in turn
   owns all its child Volume. [todo: this is guess, to be verified]
 
-.. image:: fig/object_stratery_classes.png
+.. image:: object_stratery_classes.png
 
 .. _sec:plugin_framework:
 
@@ -976,8 +1015,8 @@ Some macros frequently used are [todo]:
 8.3 Extension Mechanism
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-8.3.1 Design
-^^^^^^^^^^^^
+8.3.1 overview
+^^^^^^^^^^^^^^
 
 - Any data class instance can be attachech to ``ObjectExtensions`` deduced class objects (either by inheritance or composing)
 
@@ -985,26 +1024,53 @@ Some macros frequently used are [todo]:
 
   - Each ``ObjectExtensions`` instance has its own private store
 
-  - In most cases, it owns the extensions (i.e. in charge of delete)
+  - Use pointer to ``ExtensionEntry`` as entry value
+
+    - In most cases, it owns the extensions (i.e. in charge of delete)
 
   - Use type info to generate a key, thus easily using template to generate new entry
 
-    - this means no two entry with same type is allowed in one ``ObjectExtensions`` instance.
+    - no two entry with same type is allowed in the same ``ObjectExtensions`` object
 
-    - The interface class type should be used as key generator
+    - the interface class type should be used as key generator
 
-- ``ExtensionEntry`` is an interface, which acts as a handle to manage the underlying data extension
-  it has multiple subclasses with different ownership policy:
+- ``ExtensionEntry`` is an interface, which acts as a handle to manage the underlying data object
 
-  - ``SimpleExtension`` : no ownership transfer to containing ``ObjectExtensions``
+  - implemented as a template of the underlying data object type as argument
 
-  - ``DeleteExtension`` : with ownership transfer
+  - multiple implementations exist with different ownership policy:
 
-  - ``CopyDeleteExtension`` : with ownership transfer and copy() as clone
+    - ``SimpleExtension`` : no ownership transfer to containing ``ObjectExtensions``
 
-  - ``DetElementExtension`` : same as ``CopyDeletExtension``, but in ``DetElement`` scope only
+    - ``DeleteExtension`` : with ownership transfer
 
-Usage:
+    - ``CopyDeleteExtension`` : with ownership transfer and copy() as clone
+
+    - ``DetElementExtension`` : same as ``CopyDeletExtension``, but in ``DetElement`` scope only
+
+Class need extension support may either inherit from or contains ``ObjectExtensions``.
+
+.. table:: List of predefined classes with extension support
+    :name: tbl:extension_class_list
+
+    +------------------+---------+-------------+--------------------+
+    | class            | package | inheritance | ownership transfer |
+    +==================+=========+=============+====================+
+    | DetectorData     | DDCore  | data member | yes                |
+    +------------------+---------+-------------+--------------------+
+    | SnsitiveDetector | DDCore  | inheritance | yes                |
+    +------------------+---------+-------------+--------------------+
+    | DetElement       | DDCore  | inheritance | yes                |
+    +------------------+---------+-------------+--------------------+
+    | DigiEvent        | DDDigi  | inheritance | optional           |
+    +------------------+---------+-------------+--------------------+
+    | Geant4Run        | DDG4    | inheritance | optional           |
+    +------------------+---------+-------------+--------------------+
+    | Geant4Event      | DDG4    | inheritance | optional           |
+    +------------------+---------+-------------+--------------------+
+
+8.3.2 how to use
+^^^^^^^^^^^^^^^^
 
 - ``<typename IFACE, typename CONCRETE> IFACE* addExtension(CONCRETE* c)``
 
@@ -1016,43 +1082,36 @@ Usage:
 
 Both return values are pointer to the interface class.
 
-8.3.2 class diagram
-^^^^^^^^^^^^^^^^^^^
+8.3.3 List of useful extension data class
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. image:: fig/extension_mechanism_classes.png
-
-8.3.3 List of classes with extension support
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Classes either inherit from or contains ``ObjectExtensions``:
+The data extension is totally application-specific.
+But there are some general purpose predefined in ``DD4hep``, which are useful for library developers:
 
 .. table::
 
-    +------------------+--------+-------------+--------------------+
-    | Manager\_Type    | DDCond | inheritance | ownership transfer |
-    +==================+========+=============+====================+
-    | DetectorData     | DDCore | data member | yes                |
-    +------------------+--------+-------------+--------------------+
-    | SnsitiveDetector | \      | inheritance | yes                |
-    +------------------+--------+-------------+--------------------+
-    | DetElement       | \      | inheritance | yes                |
-    +------------------+--------+-------------+--------------------+
-    | DigiEvent        | DDDigi | inheritance | optional           |
-    +------------------+--------+-------------+--------------------+
-    | Geant4Run        | DDG4   | inheritance | optional           |
-    +------------------+--------+-------------+--------------------+
-    | Geant4Event      | \      | inheritance | optional           |
-    +------------------+--------+-------------+--------------------+
+    +------------------------------+-----------------------------+----------------------------------------------------------------------------------------+
+    | class                        | plugin                      | feature                                                                                |
+    +------------------------------+-----------------------------+----------------------------------------------------------------------------------------+
+    | ``DDRec::VariantParameters`` | ``DD4hep_ParametersPlugin`` | used to attach unlimited number of primitives parameters to a specified ``DetElement`` |
+    +------------------------------+-----------------------------+----------------------------------------------------------------------------------------+
+    | \                            | \                           | \                                                                                      |
+    +------------------------------+-----------------------------+----------------------------------------------------------------------------------------+
 
-8.3.4 TODO the internals
+8.3.4 class diagram
+^^^^^^^^^^^^^^^^^^^
+
+.. image:: extension_mechanism_classes.png
+
+8.3.5 TODO the internals
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
-8.3.4.1 main classes
+8.3.5.1 main classes
 ::::::::::::::::::::
 
-.. image:: fig/plugin_mechanism_design1.png
+.. image:: plugin_mechanism_design1.png
 
-8.3.4.2 thread-safety implementation
+8.3.5.2 thread-safety implementation
 ::::::::::::::::::::::::::::::::::::
 
 Two ``mutex`` are used in ``Registry``:
