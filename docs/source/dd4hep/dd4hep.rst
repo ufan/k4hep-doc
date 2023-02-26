@@ -11,12 +11,17 @@ Dive into ``DD4hep``
 1 DDCore
 --------
 
+.. _sec:detector_persistence:
+
 1.1 ``Detector``
 ~~~~~~~~~~~~~~~~
 
 ``Detector`` class is the entry point to use geometry management features in DD4hep.
 It provides the interface that the client needed to use the detector geometry.
 Other features in DD4hep are built around ``Detector`` building, updating and using.
+``Detector`` only deal with top-level elements (i.e. the subdetector level) in the geometry tree hierarchy.
+The geometry manipulation inside each subdetector is dispatched to the ``DetElement`` corresponding to each
+subdetector recursively.
 
 Geometry tree hierarchy is built upon ``TGeo`` package from ROOT, but convertible to Geant4 geometry with ``DDG4``.
 A second logical ``DetElement`` tree hierarchy is associated with the primary geometry tree.
@@ -84,9 +89,55 @@ resource releasing.
 **Caution:** ``Detector`` instances are not DD4hep ``Handle`` either (see `sec:object_model`_ ),
 but it owns a lot of ``Handle`` through ``DetectorData``.
 
-1.1.3 ``compact`` xml parsing
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1.1.3 use ``Detector`` instance
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Direct usage:
+
+.. table::
+
+    +-------------------------------------+-----------------------------------------------------------+
+    | method                              | function                                                  |
+    +=====================================+===========================================================+
+    | sensitiveDetector(name)             | get subdetector's SensitiveDetector by its name           |
+    +-------------------------------------+-----------------------------------------------------------+
+    | sensitiveDetector()                 | get the collection of all subdetectors' SensitiveDetector |
+    +-------------------------------------+-----------------------------------------------------------+
+    | detector(name)                      | get subdetector's DetElement by its name                  |
+    +-------------------------------------+-----------------------------------------------------------+
+    | detectors()                         | get the collection of all subdetectors' DetElement        |
+    +-------------------------------------+-----------------------------------------------------------+
+    | detectors(type1, type2 ...)         | get a set of all subdetectors' DetElement by type         |
+    +-------------------------------------+-----------------------------------------------------------+
+    | detectors(includeFlag, excludeFlag) | get a set of subdetectors' Detector by type\_flag         |
+    +-------------------------------------+-----------------------------------------------------------+
+    | detectorTypes()                     | get the available detector types                          |
+    +-------------------------------------+-----------------------------------------------------------+
+
+Through helper class ``DetectorHelper``:
+
+.. table::
+
+    +-------------------------+--------------------------------------------------------------------------------+
+    | method                  | function                                                                       |
+    +=========================+================================================================================+
+    | sensitiveDetector(name) | get subdetector's SensitiveDetector by its name                                |
+    +-------------------------+--------------------------------------------------------------------------------+
+    | sensitiveDetector(de)   | get the SensitiveDetector from a DetElement in the subdetector's geometry tree |
+    +-------------------------+--------------------------------------------------------------------------------+
+    | detectorID(id)          | get the subdetector's DetElement by system id                                  |
+    +-------------------------+--------------------------------------------------------------------------------+
+    | element(name)           | get an material element by its name                                            |
+    +-------------------------+--------------------------------------------------------------------------------+
+    | material(name)          | get a material by its name                                                     |
+    +-------------------------+--------------------------------------------------------------------------------+
+
+1.1.4 ``compact`` xml
+^^^^^^^^^^^^^^^^^^^^^
+
+Geometry is defined in ``compact`` xml.
+The client needs to specify the constant definitions, material definitions, visAttributes, subdetectors etc.
+in ``complact`` geometry.
 ``compact`` is a hitoric name referring to the xml structure used to build ``Detector``.
 It's deprecated now, but still widely used in code structure nameing and documentation.
 
@@ -111,7 +162,7 @@ create the xml reader defined in `Compact2Objects.cpp <~/src/physics/key4hep/DD4
     // for <xml> root tag
     DECLARE_XML_DOC_READER(compact,load_Compact)
 
-1.1.3.1 top-level tags and parsing sequence
+1.1.4.1 top-level tags and parsing sequence
 :::::::::::::::::::::::::::::::::::::::::::
 
 Root tag is *lccdd* or *compact*.
@@ -144,10 +195,376 @@ There're three three states in ``Detector`` instance while building it from xml:
 
   - now it's ready for usage or post-processing with plugin
 
-1.1.4 persistency
-^^^^^^^^^^^^^^^^^
+1.1.5 detector definition
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- Import form ``compact`` xml (see `1.1.3 ``compact`` xml parsing`_)
+A detector system is usually decomposed into multiple subdetectors either in a logical term or a physical term.
+The geometry building in ``DD4hep`` reflects this fact by defining each subdetector under a ``<detector>``
+tag of ``compact`` xml file on the top-level of the geometry tree hierarchy.
+The ``<detector>`` tags are parsed sequentially to build the complete detector system.
+
+To parse ``<detector>`` tag, the client needs to implement a ``detector-builder plugin`` by:
+
+.. code:: c++
+
+    // 1. definite a creator function to parse and build the sub-branch
+    // the function needs a static scope to be global and constraint visibility, signature is
+    // - decription : detector geometry which contains this subdetector branch
+    // - e : xml element <detector> corresponding to this subdetector
+    // - sens : the SensitiveDetector attached to this subdetector ~DetElement~
+    static Ref_t create_element(Detector& description, xml_h e, SensitiveDetector sens) {
+      // define the subdetector element
+      DetElement subdet(name, id);
+
+      // parse the tags under <detector> to build the geometry branch of this subdetector
+      // ...
+
+      // return the built subdetector element
+      return subdet;
+    }
+
+    // 2. declare the plugin
+    // name of the plugin is the 'type' attribute of <detector> tag
+    DECLARE_DETELEMENT(MyDetectorName, create_element)
+
+``detector-builder plugin`` is fully in charge of the creation of its own geometry tree branch.
+In other words, the internals of a subdetector is encapsulated and ``Detector`` object
+can only access the lower-level geometry tree through the subdetector's ``DetElement``.
+
+The creation of subdetector branch is completely localized in ``detector-builder plugin``.
+Placement of the subdetector is performed with respect to the mother volume, which can be picked from
+its associated ``Detector`` instances in an agnostic way:
+
+.. code:: c++
+
+    Volume mother = description.pickMotherVolume(sdet);
+
+The default mother volume is the world volume.
+But the client can customize the mother-daughter relation by explicitly register it with:
+
+.. code:: c++
+
+    void Detector::declareParent(const string& subdetector_name, const DetElement& parent)
+
+This is needed, e.g. when nesting one subdetector into another (see plugin ``DD4hep_SubdetectorAssembly`` as an example).
+Note that the registration should be done before the creation of the daughter subdetector.
+
+1.1.6 plumbing utilities to build geometry primitives
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``DD4hep`` xml parsing facility is flexible.
+There is no limitation of the client to create his own xml tags and patterns,
+and then build the geometry from these lowest level of tag attributes.
+But most of time, it may be more convenient to use predefined parsing utilities with predefined xml pattern
+to define the geometry primitives.
+
+.. _sec:shape:
+
+1.1.6.1 <shape>
+:::::::::::::::
+
+Two factory methods exist:
+
+- use xml component parser member function: ``Component::createShape()``
+
+- use utility function: ``dd4hep::xml::createShape(Detector& description, const std::string& shape_type, xml::Element element)``
+
+Both of them uses ``shape-builder plugin`` internally.
+All supported solids can be created with a type string (AKA *Factory Pattern*).
+``shape-builder plugin`` is defined with a ``DECLARE_XML_SHAPE`` macro.
+All regular shapes are defined in `ShapePlugins.cpp <~/src/physics/key4hep/DD4hep/DDCore/src/plugins/ShapePlugins.cpp>`_.
+Exact attributes depends on the shape to be defined, read ``ShapePlugins.cpp`` for details.
+`/home/yong/src/physics/key4hep/DD4hep/examples/ClientTests/compact </home/yong/src/physics/key4hep/DD4hep/examples/ClientTests/compact>`_ contains a list of example xml files
+of defining various solids.
+
+Boolean shape is special in ``DD4hep`` that it can be defined in a nested way:
+
+.. code:: xml
+
+    <!-- example of defining the parallelworld with nested boolean solid -->
+    <parallelworld_volume name="tracking_volume" anchor="/world" material="Air" connected="true" vis="VisibleBlue">
+      <!-- define the solid with three-level of nesting -->
+      <shape type="BooleanShape" operation="Subtraction">
+        <shape type="BooleanShape" operation="Subtraction">
+          <shape type="BooleanShape" operation="Subtraction"  >
+            <shape type="Tube" rmin="0*cm" rmax="100*cm" dz="100*cm"/>
+            <shape type="Cone" rmin2="0*cm" rmax2="60*cm" rmin1="0*cm" rmax1="30*cm" z="40*cm"/>
+            <position x="0*cm" y="0*cm" z="65*cm"/>
+          </shape>
+          <shape type="Cone" rmin1="0*cm" rmax1="60*cm" rmin2="0*cm" rmax2="30*cm" z="40*cm"/>
+          <position x="0" y="0" z="-65*cm"/>
+        </shape>
+        <shape type="Cone" rmin2="0*cm" rmax2="55*cm" rmin1="0*cm" rmax1="55*cm" z="30*cm"/>
+        <position x="0" y="0" z="0*cm"/>
+      </shape>
+
+      <!-- the volume's placement in mother volume -->
+      <position x="0*cm"   y="50*cm" z="0*cm"/>
+      <rotation x="pi/2.0" y="0"     z="0"/>
+    </parallelworld_volume>
+
+1.1.6.2 <volume>
+::::::::::::::::
+
+For regular volumes, i.e. volumes from CSG solid or assembly volume:
+
+- utility function: ``dd4hep::xml::Volume dd4hep::xml::createStdVolume(Detector& description, xml::Element element)``
+
+- or plugin: ``DD4hep_StdVolume``
+
+For general (in other word, special) volumes:
+
+- utility function: ``dd4hep::xml::createVolume(Detector& description, const std::string& type, xml::Element element)``
+
+- or plugin: ``DD4hep_GenericVolume``
+
+Special ``volume-builder plugin`` is defined using ``DECLARE_XML_VOLUME`` macro.
+Currently, the only supported special volume is CAD model with type string 'CAD\_Assembly' and 'CAD\_MultiVolume'.
+
+Note that no fixed tag is associated with the above functions.
+It is the client's own responsibility to assign a tag for using these functions.
+Usually, '<volume>' is a sensible option.
+
+Alternatively, the helper class ``dd4hep::xml::tools::VolumeBuilder`` can also parse '<volume>' tags.
+``VolumeBuilder`` provides more features than building volumes:
+
+.. table::
+
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | method                                           | descriptin                                                                                                 |
+    +==================================================+============================================================================================================+
+    | load(element, tag)                               | load volumes and shapes from each xml file with ``<tag>`` under *element* xml handle                       |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | makeShape(element)                               | create the shape specified with a ``<shape>`` tag; and register store in the internal map if not anonymous |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | buildShapes(element)                             | create each shape for each ``<shape>`` under *element* xml handle and append them in the internal map      |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | getShape(name)                                   | get a named shape from the internal map                                                                    |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | register(name, shape)                            | append a named shape to the internal map                                                                   |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | buildVolumes(element)                            | create volume for each ``<volume>`` under *element* xml handle and append them in the internal map         |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | volume(name)                                     | get a volume from the internal map                                                                         |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | registerVolume(name, volume)                     | append a volume to the internal map                                                                        |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | collectMaterials(element)                        | register each material for all ``<material>`` tags under *element* xml handle                              |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | buildTransformations(element)                    | create transformation for each ``<transformation>`` under *element* xml handle                             |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | placeDetector(vol, element)                      | place vol (envelope) into subdetector's mother volume, and set subdetector to this placement               |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+    | placeDaughters(de\_parent, vol\_parent, element) | place each ``<physvol>`` under *element* xml handle to *vol\_parent*                                       |
+    +--------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+
+- Note ``placeDaughters()`` also support the creation of ``DetElement`` for each placement by specifying ``<elemen>`` tag in
+
+``<physvol>`` attribute
+
+- But it does not cache the daughter ``DetElement`` created, thus no way to get a handle of them directly
+
+- Note ``VolumeBuilder`` is not the owner of the internal shape maps and volume maps. It is a simple aggregation of geometry building utilities and
+
+the internal maps acting as local caches. It's the client's responsibility to ensure all created entities are used in
+the detector geometry tree so that their ownership is transferred to the ``Detector`` instance (see Sec. `sec:objmodel_handle`_)
+
+- Note ``VolumeBuilder`` does not support ``addPhysVolID``, thus not suited for one-to-many relation between ``Volume``
+  and ``PlacedVolume``
+
+- Note ``VolumeBuilder`` support setting ``SensitiveDetector`` for a ``Volume``
+
+- Note ``VolumeBuilder`` does not support defining ``VolSurface``
+
+1.1.6.3 <envelope>
+::::::::::::::::::
+
+This is a special tag, normally used to create an envelope volume of a subdetector, either as an assembly or big box.
+The envelope is supposed to be the top-level volume of the subdetector and placed into the world volume in most cases.
+
+Envelop can be created as regular volume as in the previous section.
+Alternatively, a dedicated utility function
+``dd4hep::xml::createPlacedEnvelope(dd4hep::Detector& description, dd4hep::xml::Handle_t e, dd4hep::DetElement sdet)``
+can be used, with following xml pattern:
+
+.. code:: xml
+
+    <detector>
+      <envelope vis="ILD_ECALVis">
+        <shape type="PolyhedraRegular" numsides="8"  rmin="TPC_outer_radius+Ecal_Tpc_gap" rmax="Ecal_outer_radius"
+               dz="2.*TPC_Ecal_Hcal_barrel_halfZ"  material = "Air" />
+        <rotation x="0*deg" y="0*deg" z="90*deg-180*deg/8"/>
+        <position x="1*cm" y="0*cm" z="0*cm"/>
+      </envelope>
+    </detector>
+
+1.1.6.4 <transformation>
+::::::::::::::::::::::::
+
+1.1.7 CAD model
+^^^^^^^^^^^^^^^
+
+Both CAD import and export are supported and built upon third-party ``assimp`` library (open asset importer).
+Export is described in Sec. `sec:detector_persistence`_
+Usage examples can be found under `/home/yong/src/physics/key4hep/DD4hep/examples/DDCAD/compact </home/yong/src/physics/key4hep/DD4hep/examples/DDCAD/compact>`_.
+
+1.1.7.1 CAD shape
+:::::::::::::::::
+
+CAD shape can be created and used with the same API as described in Sec. `sec:shape`_
+
+xml pattern:
+
+.. code:: xml
+
+    <!-- in case multiple objects exist in the file, mesh/item indicates index of the object selected -->
+    <shape type="CAD_Shape" ref="${DD4hepExamplesINSTALL}/examples/DDCAD/models/BLEND/HUMAN.blend" mesh="1"/>
+
+1.1.7.2 CAD volume
+::::::::::::::::::
+
+Creating volumes directly from CAD objects are also supported (including placement transform):
+
+.. code:: xml
+
+    <XXX ref="file-name"  material="material-name">
+      <material name="material-name"/>                        <!-- alternative: child or attr -->
+
+      <!-- Envelope:  Use special envelop shape (default: assembly) -->
+      <!-- The envelope tag must match the expected pattern of the utility -->
+      <!-- dd4hep::xml::createStdVolume(Detector& desc, xml::Element e) -->
+      <envelope name="volume-name" material="material-name">
+        <shape name="shape-name" type="shape-type" args....>
+        </shape>
+      </envelope>
+
+      <!-- Option 1:  No additional children. use default material  -->
+      <!-- and place all children in the origin of the envelope -->
+
+      <!-- option 2:  Volume with default material -->
+      <volume name="vol-name"/>
+
+      <!-- Option 3:  Volume with non-default material -->
+      <volume name="vol-name" material="material-name"/>
+
+      <!-- Option 4:  Volume with optional placement. No position = (0,0,0), No rotation = (0,0,0) -->
+      <volume name="vol-name" material="material-name"/>
+      <position x="0" y="0" z="5*cm"/>
+      <rotation x="0" y="0" z="0.5*pi*rad"/>
+    </XXX>
+
+1.1.8 general-purpose ``detector-builder plugin``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Normally, the client needs to write his own ``detector-builder plugin`` dedicated for his detector.
+However, there are some predefined ones which might be useful for quick prototype demonstration  [3]_ .
+
+.. table:: General purpose ``detector-builder plugin`` for quick geometry building
+    :name: tbl:list_detector_plugins
+
+    +------------------------------+---------+----------------------------------------------+
+    | plugin name                  | feature | example                                      |
+    +==============================+=========+==============================================+
+    | ``DDhep_VolumeAssembly``     | \       | *Check\_Shape\_Box\_Reflect\_DetElement.xml* |
+    +------------------------------+---------+----------------------------------------------+
+    | ``DD4hep_ReflectedDetector`` | \       | *Check\_Shape\_Box\_Reflect\_DetElement.xml* |
+    +------------------------------+---------+----------------------------------------------+
+    | \                            | \       | \                                            |
+    +------------------------------+---------+----------------------------------------------+
+
+1.1.9 class diagram
+^^^^^^^^^^^^^^^^^^^
+
+.. image:: detector_class_hierarchy.png
+
+1.2 post-processing
+~~~~~~~~~~~~~~~~~~~
+
+1.2.1 overview
+^^^^^^^^^^^^^^
+
+After loading and building the geometry from xml, ``post-processor plugin`` can be invoked to manipulate the geometry.
+These plugins are embedded into the ``compact`` xml as following:
+
+.. code:: xml
+
+    <plugins>
+      <!-- argument attributes are passed to the plugin as string -->
+      <plugin name="PluginName_1">
+        <argument value="blah"/>
+        <argument value="blah blah"/>
+        <!-- ... -->
+      </plugin>
+
+      <plugin name="PluginName_2">
+        <argument value="foo"/>
+        <argument value="foo foo"/>
+        <!-- ... -->
+      </plugin>
+
+      <!-- ... -->
+    </plugins>
+
+Unlimited number of plugins may be attatched, and they are invoked in sequence.
+This is a very flexible mechanism, since plugins can be toggled in the xml file without changing the source code.
+
+``post-processor plugin`` is defined by following mechanism:
+
+.. code:: c++
+
+    // Define the actual function (in global scope) invoked by the plugin
+    // The signature is as following:
+    // - description : the target detector descriptin to be processed
+    // - argc, argv  : the parameter list from xml parsing or command line
+    long create_demo_plugin(dd4hep::Detector& descriptin,int argc,char** argv) {
+      // ...
+    }
+
+    // define a post-processor plugin
+    #define DECLARE_APPLY(Deom_Plugin_Name, create_demo_plugin)
+
+``post-processor plugin`` can be used in other circumstances, here is a summary:
+
+1. as described above, embedded in ``compact`` xml as a integral part of xml loading process
+
+   - this the last step of xml parsing, after loading other ``Detector`` components
+
+   - imposed on the detector description just loaded
+
+   - internally, the invocation is dispatched to ``Detector::apply(const char* factory, int argc, char** argv)``
+
+2. as the core of an independent application, demos are:
+
+   - ```teveDisplay`` <~/src/physics/key4hep/DD4hep/UtilityApps/src/teve_display.cpp>`_ using ``int main_default(const char* name, int argc, char** argv)``
+
+   - ```geoWebDisplay`` <~/src/physics/key4hep/DD4hep/UtilityApps/src/webdisplay.cpp>`_ and ```geoDisplay`` <~/src/physics/key4hep/DD4hep/UtilityApps/src/display.cpp>`_ using ``int main_plugins(const char* name, int argc, char** argv)``
+
+   - ```geoConverter`` <~/src/physics/key4hep/DD4hep/UtilityApps/src/converter.cpp>`_ using ``long run_plugin(dd4hep::Detector& description, const char* name, int argc, char** argv``
+
+3. as a command line argument of general plugin running environment:
+
+   - ```geoPluginRun`` <~/src/physics/key4hep/DD4hep/UtilityApps/src/plugin_runner.cpp>`_ using ``int invoke_plugin_runner(const char* name, int argc,char** argv)``
+
+Both step 2 and 3 need the ``compact`` xml file as a command line argument.
+The xml file should define the detector geometry to be processed by the plugin.
+
+1.2.2 Useful ``post-processor plugins``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. table::
+
+    +-----------------------------+-------------------------------------------------------------------------------------------------------------------------+
+    | plugin name                 | feature                                                                                                                 |
+    +=============================+=========================================================================================================================+
+    | ``DD4hep_ParametersPlugin`` | create a ``VariantParameters`` extension object and add it to the specified ``DetElement`` (details on `sec:extension`_ |
+    +-----------------------------+-------------------------------------------------------------------------------------------------------------------------+
+
+.. _sec:detector_persistence:
+
+1.3 persistence
+~~~~~~~~~~~~~~~
+
+- Import from ``compact`` xml
 
 - Import from GDML
 
@@ -177,135 +594,59 @@ There're three three states in ``Detector`` instance while building it from xml:
 
 - Save to GDML
 
+- Save to CAD model (with post-processor plugin ``DD4hep_CAD_export``)
+
 **Note** Geometry model import from gdml and TGeoManager need verification that full features as ``compact`` xml
 
-1.1.5 design
-^^^^^^^^^^^^
+1.4 Volume
+~~~~~~~~~~
 
-- clea
+1.4.1 VolumeManager
+^^^^^^^^^^^^^^^^^^^
 
-.. image:: detector_class_hierarchy.png
+- create volumeID of DetElement
 
-1.2 post-processor plugins
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+  - have to instatiate it using ``Detector`` descriptin once to make sure volID is generated
 
-1.2.1 overview
-^^^^^^^^^^^^^^
+1.5 DetElement
+~~~~~~~~~~~~~~
 
-After loading and building the geometry from xml, post-processing of the geometry is possible using plugins.
-Plugins which are callable from xml is defined by the macro:
+``DetElement`` acts as a data concentrator of all data  associated with a detector component, e.g.
 
-.. code:: c++
+- the detector hierarchy by exposing its children
 
-    // Define the actual function (in global scope) invoked by the plugin
-    // The signature is as following:
-    // - description : the target detector descriptin to be processed
-    // - argc, argv  : the parameter list from xml parsing or command line
-    long create_demo_plugin(dd4hep::Detector& descriptin,int argc,char** argv) {
-      // ...
-    }
+- its placement within the overall experiment if it represents an
+  entire subdetector or its placement with respect to its parent
+  if the ``DetElement`` represents a part of a subdetector.
 
-    // define a post-processor plugin
-    #define DECLARE_APPLY(Deom_Plugin_Name, create_demo_plugin)
+- information about the ``Readout`` structure if the object is
+  instrumented and read-out. Otherwise this link is empty.
 
-These plugins are built upon the plugin framework of DD4hep (details on Sec. `sec:plugin_framework`_
-They are totally user-customizable and their usage is very flexible.
-In DD4hep, they are used:
+- information about the environmental conditions e.g. conditons.
+  The access to conditions is exposed via the DetConditions interface.
+  See dd4hep/DetConditions.h for further details.
 
-1. as post-processor during xml parsing
-
-   - ``<plugin>`` tag for this purpose
-
-   - the last step of DOM parsing, after building other ``Detector`` components
-
-   - imposing on the detector description just composed from xml
-
-   - dispatch the plugin creation and invoking to ``Detector::apply(const char* factory, int argc, char** argv)``
-
-2. as the core of an independent application, demos are:
-
-   - ```teveDisplay`` <~/src/physics/key4hep/DD4hep/UtilityApps/src/teve_display.cpp>`_ using ``int main_default(const char* name, int argc, char** argv)``
-
-   - ```geoWebDisplay`` <~/src/physics/key4hep/DD4hep/UtilityApps/src/webdisplay.cpp>`_ and ```geoDisplay`` <~/src/physics/key4hep/DD4hep/UtilityApps/src/display.cpp>`_ using ``int main_plugins(const char* name, int argc, char** argv)``
-
-   - ```geoConverter`` <~/src/physics/key4hep/DD4hep/UtilityApps/src/converter.cpp>`_ using ``long run_plugin(dd4hep::Detector& description, const char* name, int argc, char** argv``
-
-3. as customizable parameter of general plugin running environment
-
-   - ```geoPluginRun`` <~/src/physics/key4hep/DD4hep/UtilityApps/src/plugin_runner.cpp>`_ using ``int invoke_plugin_runner(const char* name, int argc,char** argv)``
-
-Both step 2 and 3 need an detector xml file as a command line argument.
-The xml file specify the detector geometry to be processed by the plugin.
-
-If using a plugin from xml, the ``<plugin>`` syntax is:
-
-.. code:: xml
-
-    <plugins>
-      <plugin name="PluginName_1">
-        <argument value="blah"/>
-        <argument value="blah blah"/>
-        <!-- ... -->
-      </plugin>
-
-      <plugin name="PluginName_2">
-        <argument value="foo"/>
-        <argument value="foo foo"/>
-        <!-- ... -->
-      </plugin>
-
-      <!-- ... -->
-    </plugins>
-
-Unlimited number of plugins may be attatched, and they are invoked in sequence.
-
-1.2.2 List of useful post-processor plugins
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. table::
-
-    +-----------------------------+-------------------------------------------------------------------------------------------------------------------------+
-    | plugin name                 | feature                                                                                                                 |
-    +=============================+=========================================================================================================================+
-    | ``DD4hep_ParametersPlugin`` | create a ``VariantParameters`` extension object and add it to the specified ``DetElement`` (details on `sec:extension`_ |
-    +-----------------------------+-------------------------------------------------------------------------------------------------------------------------+
-
-1.3 Readout
-~~~~~~~~~~~
-
-1.3.1 Segmentation
-^^^^^^^^^^^^^^^^^^
-
-1.3.2 ID Decoder/Encoder
-^^^^^^^^^^^^^^^^^^^^^^^^
-
-1.4 DetElement and SensitiveDetector
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``DetElemen`` acts as a data concentrator of all data  associated with a detector component, e.g.
-geometrical dimensions, the alignment and calibration constants 
-and other slow varying conditions such as the gas pressure, end-plate 
-temperatures
+- alignment information.
 
 ``DetElement`` is associated with placement or leaf of the physical geometry tree.
-individual placement must be identified by their full path from mother 
-to daughter starting from the top-level volume. 
+individual placement must be identified by their full path from mother
+to daughter starting from the top-level volume.
 Thus, the relationship between the Detector Element and the placements
-is not defined by a single reference to the placement, but the full path 
+is not defined by a single reference to the placement, but the full path
 from the top of the detector geometry model to resolve existing
-ambiguities due to the reuse of :math:`Logical` :math:`Volumes`.
-
+ambiguities due to the reuse of logical volume.
 
 The tree structure of ``DetElement`` is a parallel structure to the physical geometrical hierarchy.
-This structure will probably not be as deep as the geometrical one since 
+This structure will probably not be as deep as the geometrical one since
 there would not need to associate detector information at very fine-grain.
-The tree of Detector Elements is fully degenerate and each detector element object will be placed only
-once in the detector element tree. In contrary, a TGeoNode is placed once in its mother volume, but the
+The tree of Detector Elements is fully **degenerate** and each detector element object will be placed only
+once in the detector element tree.
+In contrary, a TGeoNode is placed once in its mother volume, but the
 mother volume may be multiple times, thus placed multiple times in the end.
 
 .. _sec:detelement_types:
 
-1.4.1 category of detector element
+1.5.1 category of detector element
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Detector elements are categorized into 4 pre-defined groups:
@@ -318,20 +659,22 @@ Detector elements are categorized into 4 pre-defined groups:
 
 - *passive*
 
-1.5 Volume
-~~~~~~~~~~
+1.6 SensitiveDetector
+~~~~~~~~~~~~~~~~~~~~~
 
-1.5.1 VolumeManager
-^^^^^^^^^^^^^^^^^^^
-
-- create volumeID of DetElement
-
-  - have to instatiate it using ``Detector`` descriptin once to make sure volID is generated
-
-1.6 Surface
+1.7 Readout
 ~~~~~~~~~~~
 
-1.6.1 Overview
+1.7.1 Segmentation
+^^^^^^^^^^^^^^^^^^
+
+1.7.2 ID Decoder/Encoder
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+1.8 Surface
+~~~~~~~~~~~
+
+1.8.1 Overview
 ^^^^^^^^^^^^^^
 
 'Surface' in ``DD4hep`` normally is associated with a measurement surface of a detector element, but can be used
@@ -380,7 +723,7 @@ Interface class ``ISurface`` provides the access interface of using surface for 
     Note that although surface id is ``DetElement`` id, but multiple surfaces can be attached to the same ``DetElement``.
     Thus it's a multimap (see Sec. `sec:surface_management`_ for details).
 
-1.6.2 data classes
+1.8.2 data classes
 ^^^^^^^^^^^^^^^^^^
 
 The implementation distinguishes the concept of logical surface and physical surface by two subclass from ``ISurface``:
@@ -489,7 +832,7 @@ List of pre-defined physical surface class:
 
 .. _sec:surface_management:
 
-1.6.3 management classes
+1.8.3 management classes
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 There are three levels of management (as a class) defined:
@@ -535,13 +878,13 @@ There are three levels of management (as a class) defined:
 
   - these surface maps are not owner of contained ``Surface``, just a view
 
-  - it is created with ``InstallSurfaceManager`` plugin, usually embed in the ``compact`` xml as a post-processor [3]_ .
+  - it is created with ``InstallSurfaceManager`` plugin, usually embed in the ``compact`` xml as a post-processor [4]_ .
 
     - ``SurfaceManager`` is installed as a data extension of ``Detector``
 
 .. image:: fig/surface_categories.png
 
-1.6.4 add surface
+1.8.4 add surface
 ^^^^^^^^^^^^^^^^^
 
 Adding surface into detector geometry is simple:
@@ -608,7 +951,7 @@ An demo usage is as following, in the plugin source file:
     }
 
     // 5. optionally overwrite the function to create VolSurface.
-    //    It's invoked for each ~DetElement~ of the subdetector
+    //    It's invoked for every ~DetElement~ in the subdetector's geometry sub-branch
     template <typename UserData>
     void Installer<UserData>::install(dd4hep::DetElement component, dd4hep::PlacedVolume pv)   {
       // component: a detector element; pv: the placeVolume of this detector element
@@ -665,7 +1008,7 @@ Predefined installers defined in ``DDDetectors`` are:
     | ``DD4hep_CaloFaceEndcapSurfacePlugin``             | two mono-block polyhedron for each endcap, not sensitive-related       |
     +----------------------------------------------------+------------------------------------------------------------------------+
 
-1.6.5 use surface
+1.8.5 use surface
 ^^^^^^^^^^^^^^^^^
 
 Method 1:
@@ -706,24 +1049,24 @@ Method 2:
     // just fetch the surface list directly from detector element
     SurfaceList* sL = det.extension<SurfaceList>();
 
-1.6.6 class diagram
+1.8.6 class diagram
 ^^^^^^^^^^^^^^^^^^^
 
 .. image:: fig/surface_class.png
 
-1.7 Field
+1.9 Field
 ~~~~~~~~~
 
 OverlayedField
 
-1.8 Material
-~~~~~~~~~~~~
+1.10 Material
+~~~~~~~~~~~~~
 
-1.9 Visualization/Drawing
-~~~~~~~~~~~~~~~~~~~~~~~~~
+1.11 Visualization/Drawing
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1.9.1 Native method
-^^^^^^^^^^^^^^^^^^^
+1.11.1 Native method
+^^^^^^^^^^^^^^^^^^^^
 
 ``DetectorImp`` owns a ``TGeoManager``, which can be draw by ```DetectorImp::dump`` <~/src/physics/key4hep/DD4hep/DDCore/src/DetectorImp.cpp>`_
 
@@ -735,8 +1078,8 @@ OverlayedField
     detdesc.fromXML("YourDetector.xml")
     detdesc.dump()
 
-1.9.2 Utility apps
-^^^^^^^^^^^^^^^^^^
+1.11.2 Utility apps
+^^^^^^^^^^^^^^^^^^^
 
 - geoWebDisplay
 
@@ -746,7 +1089,7 @@ OverlayedField
 
 - ddev
 
-1.10 Apps
+1.12 Apps
 ~~~~~~~~~
 
 .. table::
@@ -759,16 +1102,38 @@ OverlayedField
     | \                | \                                                                                 |
     +------------------+-----------------------------------------------------------------------------------+
 
-1.11 Other Data Structures
+1.13 Other Data Structures
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1.11.1 Condition data
+1.13.1 Condition data
 ^^^^^^^^^^^^^^^^^^^^^
 
 ``OpaqueData``
 
-1.11.2 Alignment data
+1.13.2 Alignment data
 ^^^^^^^^^^^^^^^^^^^^^
+
+1.14 Checklist when building geometry tree
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- ``Solid`` must be attached to a ``Volume``
+
+- ``Volume`` must be placed except the world volume
+
+- ``DetElement`` must have a mother detector element
+
+- ``DetElement`` must attach a ``PlacedVolume`` using ``setPlacement()``
+
+- ``PlacedVolume`` in the path to a sensitive node must have a physical volume id using ``addPhysVolID``
+
+  - [todo: more explanation, `see this line <~/src/physics/key4hep/DD4hep/DDDetectors/src/SiTrackerEndcap2_geo.cpp>`_]
+
+- ``DetElement`` must be attached to each physical node that need alignment or surface in a degenerate way
+
+- ``VolSurface`` must be associated to each ``DetElement`` which need a surface representation
+
+- ``DetElement`` of a subdetector and its ``PlacedVolume`` must have a "system" id,
+  which comes from ``<detector>`` tag's "id" attribute.
 
 2 DDG4
 ------
@@ -917,7 +1282,7 @@ It's a logical concept without corresponding class definition, just like a C++20
 
 ``Handle<NamedObject>`` is a template class acting as the base class to access all named ``Object`` in DD4hep.
 It acts as a shared pointer of underlying ``NamedObject``.
-No reference counting  [4]_  is added, explicit destroy needed and the ownership is statically defined by the designer.
+No reference counting  [5]_  is added, explicit destroy needed and the ownership is statically defined by the designer.
 ``Object`` in DD4hep is always passed and handled by a ``Handle``.
 ``Handle<NamedObject>`` is aliased to ``Ref_t``.
 All ``Handle`` managed resources are created on heap, thus having static life span.
@@ -925,6 +1290,8 @@ All ``Handle`` managed resources are created on heap, thus having static life sp
 By subclassing ``Handle<NamedObject>``, different intefaces may be designed to manipulate underlying data and expoesd
 to different clients. This leads to very flexible implementation.
 This is a more general feature, not a cons, as seen by the author.
+
+.. _sec:objmodel_handle:
 
 8.1.1 Using ``Handle``
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -1132,6 +1499,9 @@ Two ``mutex`` are used in ``Registry``:
     ``static`` keyword can achieve the same goal for variable declarations, functions and anonymous unions, but not for
     type declaration. (`see this <https://stackoverflow.com/questions/4422507/superiority-of-unnamed-namespace-over-static>`_)
 
-.. [3] Direct usage in C++ code is possible, see `DDMarlinCED in MarlinUtil <~/src/physics/ilcsoft/MarlinUtil/source/src/DDMarlinCED.cc>`_
+.. [3] The accumulated time, a client or a community may build a collection of ``detector-builder plugin`` for detector types in
+    specific domain or in the client lab, which can be shared later in new projects. This is called **detector palette** in ``DD4hep``.
 
-.. [4] Reference counting is a specialization in some object implementation. No systematic usage in DD4hep except DDG4.
+.. [4] Direct usage in C++ code is possible, see `DDMarlinCED in MarlinUtil <~/src/physics/ilcsoft/MarlinUtil/source/src/DDMarlinCED.cc>`_
+
+.. [5] Reference counting is a specialization in some object implementation. No systematic usage in DD4hep except DDG4.
