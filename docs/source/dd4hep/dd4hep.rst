@@ -20,6 +20,10 @@ The document does not try to replace or duplicate the content of the official us
 User should always start from the official user manual and use this as a reference for better using ``DD4hep`` or just
 for curiosity about the internal plumbings.
 
+``DD4hep`` is like a gold mine for me, from which I learned a lot about modern C++ programming idioms and how to build
+a flexible library.
+Thus, a collection of these idioms is shown in the last section of this document.
+
 2 DDCore
 --------
 
@@ -724,35 +728,37 @@ the daughter-child relation and later changes will update the mother element acc
 
 .. table::
 
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | property      | type                    | usage                                                                |
-    +===============+=========================+======================================================================+
-    | id            | int                     | \                                                                    |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | name          | string                  | part of the geometry path string, should be unique in the same level |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | level         | int                     | \                                                                    |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | path          | string                  | \                                                                    |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | placementPath | string                  | \                                                                    |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | key           | unsigned int            | \                                                                    |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | type          | string                  | detector raw category: 'tracker' 'calorimeter'                       |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | typeFlag      | unsigned int            | mask to indicate fine category:                                      |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | volumeID      | long long int           | \                                                                    |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | privateWorld  | \                       | \                                                                    |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | parent        | DetElement              | \                                                                    |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | children      | map<string, DetElement> | \                                                                    |
-    +---------------+-------------------------+----------------------------------------------------------------------+
-    | updateCalls   | \                       | \                                                                    |
-    +---------------+-------------------------+----------------------------------------------------------------------+
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | property      | type                    | usage                                                                                                               |
+    +===============+=========================+=====================================================================================================================+
+    | id            | int                     | should be unique for subdetector element, otherwise not very useful [todo: confirm it]                              |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | name          | string                  | part of path string in the detector element tree hierarchy, should be unique in the same level                      |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | level         | int                     | level in the detector element tree hierarchy, start from 0 (the world), -1 for invalid                              |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | path          | string                  | path string from *world* to this element in the detector element tree, empty if envalid                             |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | placementPath | string                  | path string from *world* to this element's placement in the physical geometry tree (i.e. no hole), empty if invalid |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | key           | unsigned int            | a unique hash id generated from the *path*                                                                          |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | type          | string                  | detector raw category: 'tracker' 'calorimeter'                                                                      |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | typeFlag      | unsigned int            | mask to indicate fine category:                                                                                     |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | volumeID      | long long int           | only valid for sensitive element, assembled when instantiating ``VolumeManager``                                    |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | privateWorld  | \                       | [todo]                                                                                                              |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | parent        | DetElement              | as the name suggests                                                                                                |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | children      | map<string, DetElement> | as the name suggests                                                                                                |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | updateCalls   | \                       | [todo]                                                                                                              |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
+    | combinHits    | bool                    | whether combine hits in this volume, may be used in simulation                                                      |
+    +---------------+-------------------------+---------------------------------------------------------------------------------------------------------------------+
 
 .. _sec:detelement_types:
 
@@ -788,53 +794,155 @@ These extension data can be saved on disk along with the geometry hierarchy [tod
 2.5.1 Volume Extension
 ^^^^^^^^^^^^^^^^^^^^^^
 
-.. image:: volume_extension.png
+.. image:: fig/volume_extension.png
 
 2.5.2 PlacedVolume Extension
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. image:: volume_id.png
+.. image:: fig/volume_id.png
 
-2.5.2.1 Volume ID of sensitive detector
-:::::::::::::::::::::::::::::::::::::::
+Each ``DetElement`` associated with a sensitive geometry node has a unique ``VolumeID``.
+
+2.5.3 ``VolumeID`` and ``VolumeManager``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 A special member of ``PlacedVolumeExtension`` is ``VolIDs``, which is a collection of ``(name, id)`` pairs.
-Normally, each pair represents a unique id of this placement in the geometry tree level indicated by the pair's name.
-It's the user's own responsibility to assign an appropriate ``(name, id)`` for each placed volume.
-The collection of all ``(name, id)`` pairs from each ``PlacedVolume`` in the path to a sensitive ``PlacedVolume`` 
-This collection The ``VolumeID`` of this sensitive volume is then composed 
+Normally, each pair represents a unique ``id`` of this placement at the geometry tree level
+represented by the pair's ``name`` string.
+It's the user's responsibility to assign an appropriate ``(name, id)`` for each placed volume.
+In the end, the collection of all ``(name, id)`` pairs from each ``PlacedVolume`` in the path to a sensitive ``PlacedVolume`` is:
 
-2.5.3 VolumeManager
-^^^^^^^^^^^^^^^^^^^
+1. scanned by the sensitive detector's ``IDDescriptor``
 
-- create volumeID of DetElement
+2  each field of ``IDDescriptor`` should match one ``VolID`` by matching ``name``
 
-  - have to instatiate it using ``Detector`` descriptin once to make sure volID is generated
+1. ``id`` of the matched ``VolID`` is extracted and assembled into the placed sensitive volume's ``VolumeID`` using ``BitFieldCoder``
 
-2.6 SensitiveDetector
-~~~~~~~~~~~~~~~~~~~~~
+The final ``VolumeID`` is the one assigned to this specific sensitive ``PlacedVolume``.
 
-2.7 Readout
-~~~~~~~~~~~
+This is process is performed by a ``VolumeManager`` instance after the geometry is built and closed,
+by applying the ``post-processor plugin`` ``DD4hep_VolumeManager`` or ``DD4hepVolumeManager``:
 
-2.7.1 Segmentation
-^^^^^^^^^^^^^^^^^^
+- either embed it in ``compact`` xml
 
-2.7.2 ID Decoder/Encoder
-^^^^^^^^^^^^^^^^^^^^^^^^
+- or invoke static method ``VolumeManager::getVolumeManager(desc)``
 
-2.8 Field
-~~~~~~~~~
+Otherwise, ``VolumeID`` is not assembled and not valid.
+This ``VolumeManager`` is owned by the associated ``Detector`` instance.
+
+Some API classes implicitly perform this step during its instantiation:
+
+- ``SurfaceManager``
+
+- ``CellIDPositionConverter``
+
+so clients do not need to worry about this issue using these classes.
+
+In addition of generating volume id, ``VolumeManager`` is also used to fetch geometry info based on ``VolumeID``:
+
+.. code:: c++
+
+    /// Lookup the context, which belongs to a registered physical volume.
+    VolumeManagerContext* lookupContext(VolumeID volume_id) const;
+    /// Lookup a physical (placed) volume identified by its 64 bit hit ID
+    PlacedVolume lookupVolumePlacement(VolumeID volume_id) const;
+    /// Lookup a physical (placed) volume of the detector element containing a volume identified by its 64 bit hit ID
+    PlacedVolume lookupDetElementPlacement(VolumeID volume_id) const;
+    /// Convenience routine: Lookup a top level subdetector detector element according to a contained 64 bit hit ID
+    DetElement lookupDetector(VolumeID volume_id) const;
+    /// Convenience routine: Lookup the closest subdetector detector element in the hierarchy according to a contained 64 bit hit ID
+    DetElement lookupDetElement(VolumeID volume_id) const;
+    /// Convenience routine: Access the transformation of a physical volume to the world coordinate system
+    const TGeoMatrix& worldTransformation(const ConditionsMap& map,
+                                          VolumeID volume_id) const;
+
+2.5.3.1 ``VolumeManagerContext``
+::::::::::::::::::::::::::::::::
+
+It's often used to access the ``PlacedVolume`` of the sensitive component or of the closest ``DetElement``:
+
+.. code:: c++
+
+    // first get the context from VolumeManager by cellID
+    auto volCxt = volManager.findContext(cellID);
+
+    // Acces the sensitive volume placement
+    PlacedVolume pv1 = volCxt.volumePlacement();
+    // Acces the closest detector element volume placement
+    PlacedVolume pv2 = volCxt.elementPlacement();
+
+.. image:: fig/volmgr_class.png
+
+2.6 TODO SensitiveDetector
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+2.6.1 overview
+^^^^^^^^^^^^^^
+
+A ``SensitiveDetector`` is created and associated with the subdetector element during ``compact`` xml loading.
+By default, an empty ``SensitiveDetector`` is instantiated.
+Valid ``SensitiveDetector`` is activated when defining a ``Readout`` for the subdetector element.
+
+The sensitive ``Volume`` also needs to explicitly claim it by invoking:
+
+.. code:: c++
+
+    // in detector-builder plugin
+    sens_volume.setSensitiveDetector(sd);
+
+Otherwise, the volume's sensitivity can't be deduced during simulation.
+
+Type of the sensitive subdetector is also import, which is related to the default ``Geant4Action`` used to process
+the hit step during simulation. [todo: explain it in DDG4].
+
+.. table:: Data member of ``SensitiveDetector`` [todo]
+    :name: tbl:sd_member
+
+    +----------------+--------------------------------------+
+    | combineHits    | wether combine hits in the same cell |
+    +----------------+--------------------------------------+
+    | ecut           | \                                    |
+    +----------------+--------------------------------------+
+    | readout        | \                                    |
+    +----------------+--------------------------------------+
+    | region         | \                                    |
+    +----------------+--------------------------------------+
+    | limits         | \                                    |
+    +----------------+--------------------------------------+
+    | hitsCollection | \                                    |
+    +----------------+--------------------------------------+
+
+.. image:: fig/sd_class.png
+
+2.6.2 Readout & Segmentation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Most aspects are well explained in the official user guide.
+Segmentation will compose a ``CellID`` based on sensitive volume's ``VolumeID`` and the segmentation specification.
+
+One missing point is the ``MultiSegmentatiom`` and ``NoSegmentation`` support and how to use them [todo].
+
+2.6.3 IDDescriptor & BitFieldCoder
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+They are clearly explaned in the official user guide.
+
+Add how to use [todo]
+
+2.7 TODO Field
+~~~~~~~~~~~~~~
 
 OverlayedField
 
-2.9 Material
+2.8 Material
 ~~~~~~~~~~~~
+
+Well-explained in official user guide.
 
 .. _sec:detector_persistence:
 
-2.10 Persistence
-~~~~~~~~~~~~~~~~
+2.9 Persistence
+~~~~~~~~~~~~~~~
 
 - Import from ``compact`` xml
 
@@ -870,10 +978,10 @@ OverlayedField
 
 **Note** Geometry model import from gdml and TGeoManager need verification that full features as ``compact`` xml
 
-2.11 Visualization
+2.10 Visualization
 ~~~~~~~~~~~~~~~~~~
 
-2.11.1 Native method
+2.10.1 Native method
 ^^^^^^^^^^^^^^^^^^^^
 
 ``DetectorImp`` owns a ``TGeoManager``, which can be draw by ```DetectorImp::dump`` <~/src/physics/key4hep/DD4hep/DDCore/src/DetectorImp.cpp>`_
@@ -886,7 +994,7 @@ OverlayedField
     detdesc.fromXML("YourDetector.xml")
     detdesc.dump()
 
-2.11.2 Utility apps
+2.10.2 Utility apps
 ^^^^^^^^^^^^^^^^^^^
 
 - geoWebDisplay
@@ -897,7 +1005,7 @@ OverlayedField
 
 - ddev
 
-2.12 Apps
+2.11 Apps
 ~~~~~~~~~
 
 .. table::
@@ -907,18 +1015,16 @@ OverlayedField
     +------------------+-----------------------------------------------------------------------------------+
     | ``dumpdetector`` | print out: xml header, detector type, detector data, sensitive detector, surfaces |
     +------------------+-----------------------------------------------------------------------------------+
-    | \                | \                                                                                 |
-    +------------------+-----------------------------------------------------------------------------------+
 
-2.13 Other Data Structures
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+2.12 TODO Other Data Structures
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-2.13.1 Condition data
+2.12.1 Condition data
 ^^^^^^^^^^^^^^^^^^^^^
 
 ``OpaqueData``
 
-2.13.2 Alignment data
+2.12.2 Alignment data
 ^^^^^^^^^^^^^^^^^^^^^
 
 3 TODO DDG4
@@ -992,8 +1098,32 @@ Demo application:
 5 DDRec
 -------
 
-5.1 Cell ID Conversion
-~~~~~~~~~~~~~~~~~~~~~~
+5.1 ``CellIDPositionConverter``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This class is designed to be the main API to the geometry info for reconstruction tasks.
+It is instantiated with current ``Detector`` instance.
+Most of its methods accepts ``CellID`` or global 3d-position, which are directly available from recorded hit.
+
+.. table::
+
+    +---------------------------------+------------------------------------------------------------------------------------------------------+
+    | positionNominal(cellID)         | get the nominal global position of the centor of the cell matching *cellID*                          |
+    +=================================+======================================================================================================+
+    | postiion(cellID)                | same as above, but with alignment applied (no implemented yet)                                       |
+    +=================================+======================================================================================================+
+    | cellID(global\_pos)             | get the cellID based on *global\_pos*, this is an expensive operation                                |
+    +=================================+======================================================================================================+
+    | findDetElement(global\_pos, de) | get the lowest-level DetElement containing *global\_pos*, using detector element *de* as start point |
+    +=================================+======================================================================================================+
+    | findReadout(de)                 | get the readout associated with the subdetector containing the given detector element *de*           |
+    +=================================+======================================================================================================+
+    | findReadout(pv)                 | get the readout associated with the subdetector containing the given placed volume *pv*              |
+    +=================================+======================================================================================================+
+    | findContext(cellID)             | get the VolumeManagereContext based on *cellID*, rarely used as API method                           |
+    +---------------------------------+------------------------------------------------------------------------------------------------------+
+    | findPlacement()                 | not useful                                                                                           |
+    +---------------------------------+------------------------------------------------------------------------------------------------------+
 
 5.2 Surface
 ~~~~~~~~~~~
@@ -1441,8 +1571,8 @@ rotation or both with a pivot point in the origin.
 
     std::string dd4hep::versionString();
 
-9 Very Bottom Details
----------------------
+9 Kernel of the core
+--------------------
 
 .. _sec:object_model:
 
